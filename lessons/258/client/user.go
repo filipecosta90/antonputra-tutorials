@@ -34,10 +34,10 @@ func NewUser() *User {
 	return &u
 }
 
-func (u *User) SaveToRedis(ctx context.Context, rdb *redis.Client, m *metrics, exp int32, debug bool) (err error) {
+func (u *User) SaveToRedis(ctx context.Context, rdb *redis.Client, m *metrics, exp int32, debug bool) (err error, micros int64) {
 	b, err := json.Marshal(u)
 	if err != nil {
-		return util.Annotate(err, "json.Marshal failed")
+		return util.Annotate(err, "json.Marshal failed"), -1
 	}
 
 	expr := time.Duration(time.Duration(exp) * time.Second)
@@ -47,21 +47,26 @@ func (u *User) SaveToRedis(ctx context.Context, rdb *redis.Client, m *metrics, e
 	if err != nil {
 		util.Warn(err, "rdb.Set failed")
 	}
+	dur := time.Since(now)
+	micros = dur.Microseconds()
 
-	m.duration.With(prometheus.Labels{"op": "set", "db": "redis"}).Observe(time.Since(now).Seconds())
+	m.duration.With(prometheus.Labels{"op": "set", "db": "redis"}).Observe(dur.Seconds())
 
 	if debug {
 		fmt.Printf("item saved in redis, key: %s, value: %s\n", u.Uuid, string(b))
 	}
 
-	return nil
+	return nil, micros
+
 }
 
-func (u *User) GetFromRedis(ctx context.Context, rdb *redis.Client, m *metrics, debug bool) (err error) {
+func (u *User) GetFromRedis(ctx context.Context, rdb *redis.Client, m *metrics, debug bool) (err error, micros int64) {
 	now := time.Now()
 	defer func() {
 		if err == nil {
-			m.duration.With(prometheus.Labels{"op": "get", "db": "redis"}).Observe(time.Since(now).Seconds())
+			dur := time.Since(now)
+			micros = dur.Microseconds()
+			m.duration.With(prometheus.Labels{"op": "get", "db": "redis"}).Observe(dur.Seconds())
 		}
 	}()
 
@@ -74,5 +79,5 @@ func (u *User) GetFromRedis(ctx context.Context, rdb *redis.Client, m *metrics, 
 		fmt.Printf("item fetched from redis: %+v\n", val)
 	}
 
-	return nil
+	return nil, micros
 }

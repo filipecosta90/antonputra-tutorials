@@ -5,6 +5,7 @@ go 1.23.5
 toolchain go1.24.2
 
 require (
+	github.com/HdrHistogram/hdrhistogram-go v1.1.2
 	github.com/antonputra/go-utils v0.1.5
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_golang v1.22.0

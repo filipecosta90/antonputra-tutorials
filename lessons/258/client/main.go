@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/antonputra/go-utils/util"
 	"github.com/redis/go-redis/v9"
 
@@ -34,6 +35,31 @@ func main() {
 }
 
 func runTest(cfg Config, m *metrics) {
+	latencyCh := make(chan int64, 100_000)
+
+	startTime := time.Now()
+	activeClients := 0
+
+	go func() {
+		h := hdrhistogram.New(1, 10_000_000, 3) // 1µs to 10s
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case d := <-latencyCh:
+				h.RecordValue(d)
+
+			case <-ticker.C:
+				elapsed := int(time.Since(startTime).Seconds())
+				fmt.Printf(
+					"[Summary] Time: %3ds | QPS: %5d | p90 Latency: %6d µs | Active Clients: %d\n",
+					elapsed, h.TotalCount(), h.ValueAtQuantile(90.0), activeClients,
+				)
+				h.Reset()
+			}
+		}
+	}()
 
 	var ctx = context.Background()
 	currentClients := cfg.Test.MinClients
@@ -50,17 +76,27 @@ func runTest(cfg Config, m *metrics) {
 
 		now := time.Now()
 		for {
+			activeClients = len(clients)
+
 			clients <- struct{}{}
 			go func() {
+				var micros int64
+				var err error
+
 				util.Sleep(cfg.Test.RequestDelayMs)
 
 				u := NewUser()
 
-				err := u.SaveToRedis(ctx, rdb, m, cfg.Redis.Expiration, cfg.Debug)
+				err, micros = u.SaveToRedis(ctx, rdb, m, cfg.Redis.Expiration, cfg.Debug)
 				util.Warn(err, "u.SaveToRedis failed")
 
-				err = u.GetFromRedis(ctx, rdb, m, cfg.Debug)
+				err, micros = u.GetFromRedis(ctx, rdb, m, cfg.Debug)
 				util.Warn(err, "u.GetFromRedis failed")
+
+				select {
+				case latencyCh <- micros:
+				default:
+				}
 
 				<-clients
 			}()
